@@ -477,10 +477,6 @@ leo_id_entry.insert(0, CONFIG["leo_device_id"])
 ttk.Button(tab4, text="Save Settings & Test Connection", command=save_settings).pack(pady=20)
 
 if __name__ == "__main__":
-	save_settings()  
-	if CONFIG["api_key"] and CONFIG["api_key"] != 'YOUR_SYNCTHING_API_KEY':
-		refresh_data()
-	else:
-		messagebox.showinfo("Setup Required", "Welcome! Please configure your Syncthing API Key and User Device IDs in the Settings tab.")
-
+	save_settings()
+	refresh_data()	
 	root.mainloop()
