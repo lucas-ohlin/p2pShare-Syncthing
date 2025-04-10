@@ -116,7 +116,7 @@ def refresh_data():
 
     # Populate Device List
     connection_details = connections.get('connections', {})
-    device_listbox.insert(tk.END, f"👤 This Instance ({this_id}) - You are viewing as: {active_user}")
+    device_listbox.insert(tk.END, f"Server: ({this_id}) - You are viewing as: {active_user}")
     device_listbox.itemconfig(tk.END, {'bg':'lightblue'})
 
     for dev in devices:
@@ -251,7 +251,7 @@ def add_device():
         device_name_entry.delete(0, tk.END)
 
 def add_folder():
-    folder_id = folder_id_entry.get().strip() or generate_folder_id()
+    folder_id = generate_folder_id()
     label = folder_label_entry.get().strip()
     path = folder_path_entry.get().strip()
     # folder_type = sync_type_var.get() 
@@ -350,7 +350,7 @@ def save_settings():
         
 # GUI Setup
 root = tk.Tk()
-root.title("P2P Sync Manager (Bob & Leo View)")
+root.title("P2P Sync Manager")
 root.geometry("950x750") 
 
 # User Switcher
@@ -395,16 +395,23 @@ folders_pane.add(discoverable_folders_frame, weight=1)
 tab2 = ttk.Frame(notebook)
 notebook.add(tab2, text="Add Device")
 
-tk.Label(tab2, text="Device ID (of the remote Bob/Leo instance)").pack(pady=(10,0))
-device_id_entry = tk.Entry(tab2, width=60)
-device_id_entry.pack(pady=5)
+add_folder_info_label = tk.Label(tab2, text=f"Adding folder for the currently selected user: {current_user.get()}")
+add_folder_info_label.pack(pady=(10,0))
 
-tk.Label(tab2, text="Device Name (e.g., Bob-Laptop, Leo-Phone)").pack()
-device_name_entry = tk.Entry(tab2, width=50)
-device_name_entry.pack(pady=5)
+device_id_frame = ttk.Frame(tab2)
+device_id_frame.pack(fill="x", padx=20, pady=(10, 5))
+tk.Label(device_id_frame, text="Device ID:").pack(side=tk.LEFT)
+device_id_entry = tk.Entry(device_id_frame, width=50)
+device_id_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+device_name_frame = ttk.Frame(tab2)
+device_name_frame.pack(fill="x", padx=20, pady=5)
+tk.Label(device_name_frame, text="Device Name:").pack(side=tk.LEFT)
+device_name_entry = tk.Entry(device_name_frame, width=40)
+device_name_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
 ttk.Button(tab2, text="➕ Add Device to Syncthing", command=add_device).pack(pady=20)
-tk.Label(tab2, text="Note: Add Bob's and Leo's devices here first.\nThen set their Device IDs in the Settings tab.", wraplength=400, justify=tk.CENTER).pack(pady=10)
+tk.Label(tab2, text="Note: Add the devices here first.\nThen set their IDs in the Settings tab.", wraplength=400, justify=tk.CENTER).pack(pady=10)
 
 
 # Tab 3: Add Folder
@@ -417,26 +424,27 @@ add_folder_info_label.pack(pady=(10,0))
 current_user.trace_add("write", lambda *args: add_folder_info_label.config(text=f"Adding folder for the currently selected user: {current_user.get()}"))
 
 
-tk.Label(tab3, text="Folder Label (e.g., Project Docs)").pack(pady=(10,0))
-folder_label_entry = tk.Entry(tab3, width=50)
-folder_label_entry.pack(pady=5)
+# Folder Label input  
+label_frame = ttk.Frame(tab3)
+label_frame.pack(fill="x", padx=20, pady=(10, 5))
+tk.Label(label_frame, text="Label:").pack(side=tk.LEFT)
+folder_label_entry = tk.Entry(label_frame, width=40)
+folder_label_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
+# Folder Path input
 path_frame = ttk.Frame(tab3)
 path_frame.pack(fill="x", padx=20, pady=5)
-tk.Label(path_frame, text="Local Path (on the machine running this script):").pack(side=tk.LEFT)
+tk.Label(path_frame, text="Path: ").pack(side=tk.LEFT)
 folder_path_entry = tk.Entry(path_frame, width=40)
 folder_path_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 ttk.Button(path_frame, text="Browse...", command=browse_folder).pack(side=tk.RIGHT)
 
-tk.Label(tab3, text="Folder ID (optional, leave blank to auto-generate)").pack(pady=(10,0))
-folder_id_entry = tk.Entry(tab3, width=50)
-folder_id_entry.pack(pady=5)
 
 # Sync type options  
 # sync_type_var = tk.StringVar(value="sendreceive")
 
-ttk.Button(tab3, text="📁 Add Folder and Share", command=add_folder).pack(pady=20)
-tk.Label(tab3, text="This will create the folder on this central instance\nand automatically share it with the selected user (Bob or Leo).", wraplength=400, justify=tk.CENTER).pack(pady=10)
+ttk.Button(tab3, text="📁 Add Folder", command=add_folder).pack(pady=20)
+tk.Label(tab3, text="This will add the folder to the server and then sync it to the user.", wraplength=400, justify=tk.CENTER).pack(pady=10)
 
 
 # Tab 4: Settings
