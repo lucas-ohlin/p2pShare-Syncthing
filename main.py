@@ -1,82 +1,14 @@
+from config import CONFIG
+from syncthing_api import SyncthingAPI
+api = SyncthingAPI(CONFIG)
+
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from dotenv import load_dotenv
 import requests
-import json
 import os
 import uuid
 
-load_dotenv()
-
-CONFIG = {
-    "central_api_url": os.getenv("API_URL"),
-    "central_api_key": os.getenv("API_KEY"),
-    "bob_device_id": os.getenv("BOB_DEVICE_ID"),
-    "bob_api_url": os.getenv("BOB_API_URL"),
-    "bob_api_key": os.getenv("BOB_API_KEY"),
-    "leo_device_id": os.getenv("LEO_DEVICE_ID"),
-    "leo_api_url": os.getenv("LEO_API_URL"),
-    "leo_api_key": os.getenv("LEO_API_KEY"),
-}
-
 discoverable_folders_vars = []
-def handle_api_error(response, action="perform action"):
-    try:
-        response.raise_for_status()  
-        return True 
-    except requests.exceptions.RequestException as e:
-        error_message = f"Error when trying to {action}: {e}"
-        try:
-            error_details = response.json().get('error', response.text)
-            error_message = f"Failed to {action}. API Error: {error_details} (Status: {response.status_code})"
-        except (json.JSONDecodeError, AttributeError):
-            error_message = f"Failed to {action}. Error: {e} (Status: {response.status_code})"
-        messagebox.showerror("API Error", error_message)
-        return False 
-
-def get_config():
-    try:
-        r = requests.get(f'{CONFIG["api_url"]}/system/config', headers={'X-API-Key': CONFIG["api_key"]}, timeout=10)
-        if handle_api_error(r, "fetch config"):
-            return r.json()
-    except requests.exceptions.Timeout:
-        messagebox.showerror("API Error", "Connection timed out while fetching config.")
-    except Exception as e:
-        messagebox.showerror("API Error", f"An unexpected error occurred fetching config: {e}")
-    return None  
-
-def post_config(config_data):
-    try:
-        response = requests.post(f'{CONFIG["api_url"]}/system/config', headers={'X-API-Key': CONFIG["api_key"]}, json=config_data, timeout=15)
-        return handle_api_error(response, "update config")
-    except requests.exceptions.Timeout:
-        messagebox.showerror("API Error", "Connection timed out while updating config.")
-    except Exception as e:
-        messagebox.showerror("API Error", f"An unexpected error occurred updating config: {e}")
-    return False 
-
-def get_status():
-    try:
-        r = requests.get(f'{CONFIG["api_url"]}/system/status', headers={'X-API-Key': CONFIG["api_key"]}, timeout=10)
-        if handle_api_error(r, "fetch status"):
-            return r.json()
-    except requests.exceptions.Timeout:
-        messagebox.showerror("API Error", "Connection timed out while fetching status.")
-    except Exception as e:
-        messagebox.showerror("API Error", f"An unexpected error occurred fetching status: {e}")
-    return None
-
-def get_connections():
-     try:
-        r = requests.get(f'{CONFIG["api_url"]}/system/connections', headers={'X-API-Key': CONFIG["api_key"]}, timeout=10)
-        if handle_api_error(r, "fetch connections"):
-            return r.json()
-     except requests.exceptions.Timeout:
-        messagebox.showerror("API Error", "Connection timed out while fetching connections.")
-     except Exception as e:
-        messagebox.showerror("API Error", f"An unexpected error occurred fetching connections: {e}")
-     return None
-
 def refresh_data():
     global CONFIG
     seen_folder_ids = set()
@@ -87,9 +19,9 @@ def refresh_data():
     if not CONFIG["bob_device_id"] or not CONFIG["leo_device_id"]:
         messagebox.showwarning("Configuration Needed", "Please set Bob's and Leo's Device IDs in the Settings tab.")
 
-    config = get_config()
-    status = get_status()
-    connections = get_connections()
+    config = api.get_config()
+    status = api.get_status()
+    connections = api.get_connections()
 
     if config is None or status is None or connections is None:
         messagebox.showerror("Error", "Failed to load data from Syncthing. Check connection and API key.")
@@ -128,7 +60,7 @@ def refresh_data():
         if dev_id == this_id: continue  
 
         name = dev.get('name', 'Unknown Name')
-        status_text = "✅ Connected" if connection_details.get(dev_id, {}).get('connected', False) else "❌ Disconnected"
+        status_text = "Connected" if connection_details.get(dev_id, {}).get('connected', False) else "Disconnected"
         user_tag = ""
         if dev_id == bob_id:
             user_tag = " (Bob's Device)"
@@ -223,7 +155,7 @@ def sync_discovered_folder(folder_id, folder_label):
         messagebox.showerror("Error", f"Device ID for {active_user} is not set.")
         return
 
-    config = get_config()
+    config = api.get_config()
     if config is None:
         return
 
@@ -239,7 +171,7 @@ def sync_discovered_folder(folder_id, folder_label):
     device_ids = {d['deviceID'] for d in folder_to_sync.get('devices', [])}
     if active_user_id not in device_ids:
         folder_to_sync['devices'].append({"deviceID": active_user_id})
-        if not post_config(config):
+        if not api.post_config(config):
             return
 
     # Build full folder block to send to user
@@ -271,7 +203,7 @@ def add_device():
         messagebox.showwarning("Missing Info", "Device ID and Name are required.")
         return
 
-    config = get_config()
+    config = api.get_config()
     if config is None: return
 
     # Check if device already exists
@@ -289,7 +221,7 @@ def add_device():
 
     config['devices'].append(new_device)
 
-    if post_config(config):
+    if api.post_config(config):
         messagebox.showinfo("Success", f"Device '{name}' added successfully. Remember to approve it on the other device if necessary.")
         refresh_data()
         device_id_entry.delete(0, tk.END)
@@ -299,11 +231,12 @@ def add_folder():
     folder_id = generate_folder_id()
     label = folder_label_entry.get().strip()
     path = folder_path_entry.get().strip()
-    # folder_type = sync_type_var.get() 
-    folder_type="sendreceive"
+    folder_type = "sendreceive"
 
     active_user = current_user.get()
     active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
+    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
+    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
     this_id = CONFIG["this_device_id"]
 
     if not label or not path:
@@ -328,10 +261,9 @@ def add_folder():
         else:
             return
 
-    config = get_config()
+    config = api.get_config()
     if config is None: return
 
-     # Check if folder ID or path already exists
     for f in config.get('folders', []):
         if f['id'] == folder_id:
             messagebox.showwarning("Already Exists", f"Folder ID '{folder_id}' already exists.")
@@ -345,21 +277,26 @@ def add_folder():
         "label": label,
         "path": path,
         "type": folder_type,
-        "rescanIntervalS": 60,  
-        "fsWatcherEnabled": True,  
+        "rescanIntervalS": 60,
+        "fsWatcherEnabled": True,
         "devices": [
-            {"deviceID": this_id},         # Share with this central instance
-            {"deviceID": active_user_id}   # Share with the current user's device
+            {"deviceID": this_id},
+            {"deviceID": active_user_id}
         ],
     }
 
     config['folders'].append(new_folder)
-
-    if post_config(config):
-        messagebox.showinfo("Success", f"Folder '{label}' added and shared with {active_user}.")
+    if api.post_config(config):
+        # Push the folder to the users Syncthing
+        if push_folder_to_user(new_folder, user_api_url, user_api_key):
+            messagebox.showinfo("Success", f"Folder '{label}' added and synced to {active_user}'s device.")
+        else:
+            messagebox.showwarning("Partial Success", f"Folder added to central config, but failed to sync with {active_user}.")
+        
         refresh_data()
         folder_label_entry.delete(0, tk.END)
         folder_path_entry.delete(0, tk.END)
+
 
 def browse_folder():
     path = filedialog.askdirectory()
@@ -386,7 +323,7 @@ def save_settings():
     CONFIG["bob_device_id"] = new_bob_id
     CONFIG["leo_device_id"] = new_leo_id
 
-    status = get_status()
+    status = api.get_status()
     if status:
         CONFIG["this_device_id"] = status.get('myID', '')
         refresh_data()
