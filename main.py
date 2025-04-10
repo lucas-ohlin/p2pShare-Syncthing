@@ -120,6 +120,7 @@ def sync_selected_folders():
 
 def push_folder_to_user(folder, user_api_url, user_api_key):
     try:
+        # Fetch user's full config
         r = requests.get(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, timeout=10)
         r.raise_for_status()
         user_config = r.json()
@@ -127,12 +128,31 @@ def push_folder_to_user(folder, user_api_url, user_api_key):
         messagebox.showerror("API Error", f"Could not fetch config from remote device: {e}")
         return False
 
-    # Check if folder already exists
-    if any(f['id'] == folder['id'] for f in user_config.get('folders', [])):
-        return True  
+    # Get the server device ID
+    central_device_id = CONFIG.get("this_device_id")
+    if not central_device_id:
+        messagebox.showerror("Error", "Central device ID (this_device_id) not available.")
+        return False
 
-    # Add the folder to user's config
-    user_config['folders'].append(folder)
+    # Make sure the central device is in the users devices list
+    if not any(dev["deviceID"] == central_device_id for dev in user_config.get("devices", [])):
+        user_config["devices"].append({
+            "deviceID": central_device_id,
+            "name": "CentralServer",
+            "addresses": ["dynamic"],
+            "compression": "metadata",
+            "introducer": False
+        })
+
+    if any(f['id'] == folder['id'] for f in user_config.get('folders', [])):
+        return True
+
+    user_folder = folder.copy()
+    user_folder["devices"] = [
+        {"deviceID": central_device_id},
+        {"deviceID": folder["devices"][1]["deviceID"]} 
+    ]
+    user_config["folders"].append(user_folder)
 
     try:
         r = requests.post(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, json=user_config, timeout=10)
