@@ -1,20 +1,25 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from dotenv import load_dotenv
 import requests
 import json
 import os
 import uuid
-from functools import partial  
+
+load_dotenv()
 
 CONFIG = {
-    "api_url": 'http://localhost:8384/rest',
-    "api_key": 'izXHCAcMnPzkuayqLKC6YgPXGWDmSE62',  
-    "bob_device_id": "7DANXYC-B64IOSI-RFWMCIE-NP3BGJL-GS5HUT5-HYTUS2S-CI7PXXO-4DEGEAL", 
-    "leo_device_id": "GRVMNRX-F6IODQH-7FK34AQ-2I4X6IY-45AXU5R-QHWMMVM-44TV6HY-IZII7AJ",  
+    "central_api_url": os.getenv("API_URL"),
+    "central_api_key": os.getenv("API_KEY"),
+    "bob_device_id": os.getenv("BOB_DEVICE_ID"),
+    "bob_api_url": os.getenv("BOB_API_URL"),
+    "bob_api_key": os.getenv("BOB_API_KEY"),
+    "leo_device_id": os.getenv("LEO_DEVICE_ID"),
+    "leo_api_url": os.getenv("LEO_API_URL"),
+    "leo_api_key": os.getenv("LEO_API_KEY"),
 }
 
 discoverable_folders_vars = []
-
 def handle_api_error(response, action="perform action"):
     try:
         response.raise_for_status()  
@@ -103,7 +108,6 @@ def refresh_data():
     active_user = current_user.get()
     active_user_id = bob_id if active_user == "Bob" else leo_id
     other_user_id = leo_id if active_user == "Bob" else bob_id
-    other_user_name = "Leo" if active_user == "Bob" else "Bob"
 
     devices = config.get('devices', [])
     folders = config.get('folders', [])
@@ -173,8 +177,6 @@ def refresh_data():
             discoverable_folders_vars.append((var, folder_info["id"], folder_info["label"]))
     ttk.Button(discoverable_folders_frame, text="Sync Folders", command=sync_selected_folders).pack(pady=10)
 
-
-
 def sync_selected_folders():
     selected = [(fid, label) for var, fid, label in discoverable_folders_vars if var.get()]
     if not selected:
@@ -184,38 +186,81 @@ def sync_selected_folders():
     for folder_id, folder_label in selected:
         sync_discovered_folder(folder_id, folder_label)
 
+def push_folder_to_user(folder, user_api_url, user_api_key):
+    try:
+        r = requests.get(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, timeout=10)
+        r.raise_for_status()
+        user_config = r.json()
+    except Exception as e:
+        messagebox.showerror("API Error", f"Could not fetch config from remote device: {e}")
+        return False
+
+    # Check if folder already exists
+    if any(f['id'] == folder['id'] for f in user_config.get('folders', [])):
+        return True  
+
+    # Add the folder to user's config
+    user_config['folders'].append(folder)
+
+    try:
+        r = requests.post(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, json=user_config, timeout=10)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        messagebox.showerror("API Error", f"Failed to update remote config: {e}")
+        return False
+
 ### Add current users ID to the sharing list
 def sync_discovered_folder(folder_id, folder_label):
     active_user = current_user.get()
     active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
+    this_id = CONFIG["this_device_id"]
+
+    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
+    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
 
     if not active_user_id:
-        messagebox.showerror("Error", f"Device ID for {active_user} is not set in Settings.")
-        return
-
-    if not messagebox.askyesno("Confirm Sync", f"Do you want to start syncing the folder '{folder_label}' for {active_user}?"):
+        messagebox.showerror("Error", f"Device ID for {active_user} is not set.")
         return
 
     config = get_config()
-    if config is None: return 
-
-    folder_updated = False
-    for folder in config.get('folders', []):
-        if folder['id'] == folder_id:
-            devices = folder.get('devices', [])
-            if not any(d['deviceID'] == active_user_id for d in devices):
-                devices.append({'deviceID': active_user_id})
-                folder['devices'] = devices
-                folder_updated = True
-                break  
-
-    if not folder_updated:
-        messagebox.showerror("Error", f"Could not find folder '{folder_label}' ({folder_id}) in the current configuration.")
+    if config is None:
         return
 
-    if post_config(config):
-        messagebox.showinfo("Success", f"Folder '{folder_label}' is now being synced with {active_user}.")
-        refresh_data()  
+    folder_to_sync = next((f for f in config['folders'] if f['id'] == folder_id), None)
+    if not folder_to_sync:
+        messagebox.showerror("Error", f"Folder {folder_label} not found.")
+        return
+
+    if not messagebox.askyesno("Confirm Sync", f"Start syncing the folder '{folder_label}' for {active_user}?"):
+        return
+
+    # Update central config if user's device isn't already in it
+    device_ids = {d['deviceID'] for d in folder_to_sync.get('devices', [])}
+    if active_user_id not in device_ids:
+        folder_to_sync['devices'].append({"deviceID": active_user_id})
+        if not post_config(config):
+            return
+
+    # Build full folder block to send to user
+    folder_for_user = {
+        "id": folder_to_sync["id"],
+        "label": folder_to_sync.get("label", folder_to_sync["id"]),
+        "path": folder_to_sync["path"],  # You could customize path per user if needed
+        "type": folder_to_sync.get("type", "sendreceive"),
+        "rescanIntervalS": folder_to_sync.get("rescanIntervalS", 60),
+        "fsWatcherEnabled": folder_to_sync.get("fsWatcherEnabled", True),
+        "devices": [
+            {"deviceID": this_id},
+            {"deviceID": active_user_id}
+        ]
+    }
+
+    # Send to the user's own Syncthing
+    if push_folder_to_user(folder_for_user, user_api_url, user_api_key):
+        messagebox.showinfo("Success", f"Folder '{folder_label}' is now syncing on {active_user}'s device.")
+        refresh_data()
+
 
 ### Add device to config
 def add_device():
@@ -231,8 +276,8 @@ def add_device():
 
     # Check if device already exists
     if any(d['deviceID'] == device_id for d in config.get('devices', [])):
-         messagebox.showwarning("Already Exists", f"Device ID '{device_id}' already exists.")
-         return
+        messagebox.showwarning("Already Exists", f"Device ID '{device_id}' already exists.")
+        return
 
     new_device = {
         "deviceID": device_id,
@@ -295,7 +340,6 @@ def add_folder():
             messagebox.showwarning("Already Exists", f"Folder Path '{path}' is already used by folder '{f['label']}'.")
             return
 
-
     new_folder = {
         "id": folder_id,
         "label": label,
@@ -314,7 +358,6 @@ def add_folder():
     if post_config(config):
         messagebox.showinfo("Success", f"Folder '{label}' added and shared with {active_user}.")
         refresh_data()
-        folder_id_entry.delete(0, tk.END)
         folder_label_entry.delete(0, tk.END)
         folder_path_entry.delete(0, tk.END)
 
@@ -348,6 +391,7 @@ def save_settings():
         CONFIG["this_device_id"] = status.get('myID', '')
         refresh_data()
         
+        
 # GUI Setup
 root = tk.Tk()
 root.title("P2P Sync Manager")
@@ -362,9 +406,9 @@ ttk.Radiobutton(user_frame, text="Bob", variable=current_user, value="Bob", comm
 ttk.Radiobutton(user_frame, text="Leo", variable=current_user, value="Leo", command=refresh_data).pack(side=tk.LEFT, padx=5)
 ttk.Button(user_frame, text="🔄 Refresh View", command=refresh_data).pack(side=tk.RIGHT, padx=5)
 
-
 notebook = ttk.Notebook(root)
 notebook.pack(fill="both", expand=True, padx=10, pady=(0,10)) 
+
 
 # Tab 1: Overview
 tab1 = ttk.Frame(notebook)
@@ -390,6 +434,7 @@ my_folders_listbox.pack(fill="both", expand=True, padx=5, pady=5)
 discoverable_folders_frame = ttk.LabelFrame(folders_pane, text="Discoverable Folders")
 discoverable_title = discoverable_folders_frame 
 folders_pane.add(discoverable_folders_frame, weight=1) 
+
 
 # Tab 2: Add Device
 tab2 = ttk.Frame(notebook)
@@ -423,7 +468,6 @@ add_folder_info_label.pack(pady=(10,0))
 # Update label text when user switches
 current_user.trace_add("write", lambda *args: add_folder_info_label.config(text=f"Adding folder for the currently selected user: {current_user.get()}"))
 
-
 # Folder Label input  
 label_frame = ttk.Frame(tab3)
 label_frame.pack(fill="x", padx=20, pady=(10, 5))
@@ -438,7 +482,6 @@ tk.Label(path_frame, text="Path: ").pack(side=tk.LEFT)
 folder_path_entry = tk.Entry(path_frame, width=40)
 folder_path_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 ttk.Button(path_frame, text="Browse...", command=browse_folder).pack(side=tk.RIGHT)
-
 
 # Sync type options  
 # sync_type_var = tk.StringVar(value="sendreceive")
@@ -464,7 +507,6 @@ api_key_entry = tk.Entry(api_settings_frame, width=50)
 api_key_entry.grid(row=1, column=1, padx=5, pady=5)
 api_key_entry.insert(0, CONFIG["api_key"])
 
-
 user_id_frame = ttk.LabelFrame(tab4, text="User Device IDs")
 user_id_frame.pack(fill="x", padx=10, pady=10)
 
@@ -479,7 +521,6 @@ leo_id_entry.grid(row=1, column=1, padx=5, pady=5)
 leo_id_entry.insert(0, CONFIG["leo_device_id"])
 
 ttk.Button(tab4, text="Save Settings & Test Connection", command=save_settings).pack(pady=20)
-
 
 if __name__ == "__main__":
 	save_settings()  
