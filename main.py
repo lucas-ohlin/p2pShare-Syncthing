@@ -74,6 +74,7 @@ def get_connections():
 
 def refresh_data():
     global CONFIG
+    seen_folder_ids = set()
 
     if not CONFIG["api_key"] or CONFIG["api_key"] == 'YOUR_SYNCTHING_API_KEY':
         messagebox.showwarning("Configuration Needed", "Please set the Syncthing API Key in the Settings tab.")
@@ -91,10 +92,10 @@ def refresh_data():
 
     # Store this device id if it's not hardcoded in the config
     if not CONFIG["this_device_id"]:
-         CONFIG["this_device_id"] = status.get('myID', '')
-         if not CONFIG["this_device_id"]:
-              messagebox.showerror("Error", "Could not determine the Device ID of this Syncthing instance.")
-              return  
+        CONFIG["this_device_id"] = status.get('myID', '')
+        if not CONFIG["this_device_id"]:
+            messagebox.showerror("Error", "Could not determine the Device ID of this Syncthing instance.")
+            return  
 
     this_id = CONFIG["this_device_id"]
     bob_id = CONFIG["bob_device_id"]
@@ -111,8 +112,7 @@ def refresh_data():
     device_listbox.delete(0, tk.END)
     my_folders_listbox.delete(0, tk.END)
     for widget in discoverable_folders_frame.winfo_children():
-        if isinstance(widget, ttk.Button):
-            widget.destroy()
+        widget.destroy()
 
     # Populate Device List
     connection_details = connections.get('connections', {})
@@ -155,7 +155,9 @@ def refresh_data():
         if is_shared_with_active:
             my_folders_list.append(display_text)
         elif is_shared_with_other: 
-            discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
+            if folder_id not in seen_folder_ids:
+                discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
+                seen_folder_ids.add(folder_id)
 
     # Update My Folders Listbox
     my_folders_listbox.insert(tk.END, *my_folders_list)
@@ -169,14 +171,14 @@ def refresh_data():
             cb = ttk.Checkbutton(discoverable_folders_frame, text=folder_info["text"], variable=var)
             cb.pack(anchor="w", padx=5, pady=2)
             discoverable_folders_vars.append((var, folder_info["id"], folder_info["label"]))
-    ttk.Button(discoverable_folders_frame, text="✅ Sync Selected Folders", command=sync_selected_folders).pack(pady=10)
+    ttk.Button(discoverable_folders_frame, text="Sync Folders", command=sync_selected_folders).pack(pady=10)
 
 
 
 def sync_selected_folders():
     selected = [(fid, label) for var, fid, label in discoverable_folders_vars if var.get()]
     if not selected:
-        messagebox.showinfo("No Selection", "Please select at least one folder to sync.")
+        messagebox.showinfo("Nothing Selected", "Please select at least one folder to sync.")
         return
 
     for folder_id, folder_label in selected:
@@ -264,12 +266,12 @@ def add_folder():
         return
 
     if not this_id:
-         messagebox.showerror("Error", "Cannot add folder: This instance's Device ID is unknown.")
-         return
+        messagebox.showerror("Error", "Cannot add folder: This instance's Device ID is unknown.")
+        return
 
     if not active_user_id:
-         messagebox.showerror("Error", f"Cannot add folder: {active_user}'s Device ID is not set in Settings.")
-         return
+        messagebox.showerror("Error", f"Cannot add folder: {active_user}'s Device ID is not set in Settings.")
+        return
 
     if not os.path.exists(path):
         if messagebox.askyesno("Path Not Found", f"The path '{path}' doesn't exist on the server hosting Syncthing. Create it?"):
