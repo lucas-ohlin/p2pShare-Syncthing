@@ -114,8 +114,38 @@ def sync_selected_folders():
         messagebox.showinfo("Nothing Selected", "Please select at least one folder to sync.")
         return
 
+    # If multiple folders selected, show a single confirmation dialog
+    folder_names = ", ".join([label for _, label in selected])
+    if len(selected) > 1:
+        confirm_message = f"Start syncing the following folders for {current_user.get()}?\n\n{folder_names}"
+    else:
+        confirm_message = f"Start syncing the folder '{folder_names}' for {current_user.get()}?"
+
+    if not messagebox.askyesno("Confirm Sync", confirm_message):
+        return
+
+    successful_syncs = []
+    failed_syncs = []
+
+    # Process all selected folders
     for folder_id, folder_label in selected:
-        sync_discovered_folder(folder_id, folder_label)
+        result = sync_discovered_folder(folder_id, folder_label, skip_confirmation=True, skip_success_message=True)
+        if result:
+            successful_syncs.append(folder_label)
+        else:
+            failed_syncs.append(folder_label)
+    
+    # Refresh once after all syncs are done
+    refresh_data()
+    
+    # Show a single summary message 
+    if successful_syncs:
+        success_msg = f"Successfully synced folder{'s' if len(successful_syncs) > 1 else ''}:\n" + "\n".join(successful_syncs)
+        if failed_syncs:
+            success_msg += f"\n\nFailed to sync:\n" + "\n".join(failed_syncs)
+        messagebox.showinfo("Sync Complete", success_msg)
+    elif failed_syncs:
+        messagebox.showerror("Sync Failed", f"Failed to sync folder{'s' if len(failed_syncs) > 1 else ''}:\n" + "\n".join(failed_syncs))
         
 def unsync_folder():
     selected_index = my_folders_listbox.curselection()
@@ -231,7 +261,7 @@ def push_folder_to_user(folder, user_api_url, user_api_key):
         return False
 
 ### Add current users ID to the sharing list
-def sync_discovered_folder(folder_id, folder_label):
+def sync_discovered_folder(folder_id, folder_label, skip_confirmation=False, skip_success_message=False):
     active_user = current_user.get()
     active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
     this_id = CONFIG["this_device_id"]
@@ -241,32 +271,33 @@ def sync_discovered_folder(folder_id, folder_label):
 
     if not active_user_id:
         messagebox.showerror("Error", f"Device ID for {active_user} is not set.")
-        return
+        return False
 
     config = api.get_config()
     if config is None:
-        return
+        return False
 
     folder_to_sync = next((f for f in config['folders'] if f['id'] == folder_id), None)
     if not folder_to_sync:
         messagebox.showerror("Error", f"Folder {folder_label} not found.")
-        return
+        return False
 
-    if not messagebox.askyesno("Confirm Sync", f"Start syncing the folder '{folder_label}' for {active_user}?"):
-        return
+    # Only show confirmation if not skipped (for batch processing)
+    if not skip_confirmation and not messagebox.askyesno("Confirm Sync", f"Start syncing the folder '{folder_label}' for {active_user}?"):
+        return False
 
-    # Update central config if user's device isn't already in it
+    # Update central config if user isn't in it
     device_ids = {d['deviceID'] for d in folder_to_sync.get('devices', [])}
     if active_user_id not in device_ids:
         folder_to_sync['devices'].append({"deviceID": active_user_id})
         if not api.post_config(config):
-            return
+            return False
 
     # Build full folder block to send to user
     folder_for_user = {
         "id": folder_to_sync["id"],
         "label": folder_to_sync.get("label", folder_to_sync["id"]),
-        "path": folder_to_sync["path"],  # You could customize path per user if needed
+        "path": folder_to_sync["path"],   
         "type": folder_to_sync.get("type", "sendreceive"),
         "rescanIntervalS": folder_to_sync.get("rescanIntervalS", 60),
         "fsWatcherEnabled": folder_to_sync.get("fsWatcherEnabled", True),
@@ -276,10 +307,13 @@ def sync_discovered_folder(folder_id, folder_label):
         ]
     }
 
-    # Send to the user's own Syncthing
-    if push_folder_to_user(folder_for_user, user_api_url, user_api_key):
+    # Send to the users own Syncthing
+    success = push_folder_to_user(folder_for_user, user_api_url, user_api_key)
+    if success and not skip_success_message:
         messagebox.showinfo("Success", f"Folder '{folder_label}' is now syncing on {active_user}'s device.")
         refresh_data()
+        
+    return success
 
 ### Add device to config
 def add_device():
