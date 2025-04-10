@@ -1,5 +1,5 @@
-from config import CONFIG
-from syncthing_api import SyncthingAPI
+from components.config import CONFIG
+from components.syncthing_api import SyncthingAPI
 api = SyncthingAPI(CONFIG)
 
 import tkinter as tk
@@ -13,11 +13,15 @@ def refresh_data():
     global CONFIG
     seen_folder_ids = set()
 
+    # Missing server API key
     if not CONFIG["api_key"] or CONFIG["api_key"] == 'YOUR_SYNCTHING_API_KEY':
         messagebox.showwarning("Configuration Needed", "Please set the Syncthing API Key in the Settings tab.")
         return
-    if not CONFIG["bob_device_id"] or not CONFIG["leo_device_id"]:
-        messagebox.showwarning("Configuration Needed", "Please set Bob's and Leo's Device IDs in the Settings tab.")
+    # If missing device IDs
+    missing_ids = [user for user, info in CONFIG["users"].items() if not info.get("device_id")]
+    if missing_ids:
+        messagebox.showwarning(f"Please set device IDs for: {', '.join(missing_ids)} in the Settings tab.")
+        return
 
     config = api.get_config()
     status = api.get_status()
@@ -34,11 +38,11 @@ def refresh_data():
             return  
 
     this_id = CONFIG["this_device_id"]
-    bob_id = CONFIG["bob_device_id"]
-    leo_id = CONFIG["leo_device_id"]
     active_user = current_user.get()
-    active_user_id = bob_id if active_user == "Bob" else leo_id
-    other_user_id = leo_id if active_user == "Bob" else bob_id
+    users = CONFIG["users"]
+    active_user_id = users[active_user]["device_id"]
+    other_users = {k: v for k, v in users.items() if k != active_user}
+    other_user_ids = [u["device_id"] for u in other_users.values()]
 
     devices = config.get('devices', [])
     folders = config.get('folders', [])
@@ -61,10 +65,10 @@ def refresh_data():
         name = dev.get('name', 'Unknown Name')
         status_text = "Connected" if connection_details.get(dev_id, {}).get('connected', False) else "Disconnected"
         user_tag = ""
-        if dev_id == bob_id:
-            user_tag = " (Bob's Device)"
-        elif dev_id == leo_id:
-             user_tag = " (Leo's Device)"
+        for username, info in CONFIG["users"].items():
+            if dev_id == info["device_id"]:
+                user_tag = f" ({username}'s Device)"
+                break
 
         device_listbox.insert(tk.END, f"{name}{user_tag} ({dev_id}) - {status_text}")
 
@@ -83,13 +87,11 @@ def refresh_data():
             continue
 
         is_shared_with_active = active_user_id in folder_devices
-        is_shared_with_other = other_user_id in folder_devices
-
         display_text = f"{label} ({folder_id}) → {path}"
 
         if is_shared_with_active:
             my_folders_list.append(display_text)
-        elif is_shared_with_other: 
+        elif any(uid in folder_devices for uid in other_user_ids):
             if folder_id not in seen_folder_ids:
                 discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
                 seen_folder_ids.add(folder_id)
@@ -163,9 +165,10 @@ def unsync_folder():
     
     folder_id = match.group(1)
     active_user = current_user.get()
-    active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
-    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
-    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
+    user_info = CONFIG["users"][active_user]
+    active_user_id = user_info["device_id"]
+    user_api_url = user_info["api_url"]
+    user_api_key = user_info["api_key"]
     
     if not messagebox.askyesno("Confirm Unsync", f"Are you sure you want to stop syncing the folder '{selected_text}'?\n\nThis will remove it from {active_user}'s device configuration but won't delete any files."):
         return
@@ -263,11 +266,11 @@ def push_folder_to_user(folder, user_api_url, user_api_key):
 ### Add current users ID to the sharing list
 def sync_discovered_folder(folder_id, folder_label, skip_confirmation=False, skip_success_message=False):
     active_user = current_user.get()
-    active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
     this_id = CONFIG["this_device_id"]
-
-    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
-    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
+    user_info = CONFIG["users"][active_user]
+    active_user_id = user_info["device_id"]
+    user_api_url = user_info["api_url"]
+    user_api_key = user_info["api_key"]
 
     if not active_user_id:
         messagebox.showerror("Error", f"Device ID for {active_user} is not set.")
@@ -355,9 +358,10 @@ def add_folder():
     folder_type = "sendreceive"
 
     active_user = current_user.get()
-    active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
-    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
-    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
+    user_info = CONFIG["users"][active_user]
+    active_user_id = user_info["device_id"]
+    user_api_url = user_info["api_url"]
+    user_api_key = user_info["api_key"]
     this_id = CONFIG["this_device_id"]
 
     if not label or not path:
@@ -432,22 +436,20 @@ def save_settings():
     global CONFIG
     new_url = api_url_entry.get().strip()
     new_key = api_key_entry.get().strip()
-    new_bob_id = bob_id_entry.get().strip()
-    new_leo_id = leo_id_entry.get().strip()
 
     if not new_url or not new_key:
         return
 
     CONFIG["api_url"] = new_url
     CONFIG["api_key"] = new_key
-    CONFIG["bob_device_id"] = new_bob_id
-    CONFIG["leo_device_id"] = new_leo_id
+
+    for username, entry in user_entries.items():
+        CONFIG["users"][username]["device_id"] = entry.get().strip()
 
     status = api.get_status()
     if status:
         CONFIG["this_device_id"] = status.get('myID', '')
         refresh_data()
-        
         
 # GUI Setup
 root = tk.Tk()
@@ -459,8 +461,8 @@ current_user = tk.StringVar(value="Bob")
 user_frame = ttk.Frame(root)
 user_frame.pack(pady=5, fill="x", padx=10)
 tk.Label(user_frame, text="Current View:").pack(side=tk.LEFT, padx=5)
-ttk.Radiobutton(user_frame, text="Bob", variable=current_user, value="Bob", command=refresh_data).pack(side=tk.LEFT, padx=5)
-ttk.Radiobutton(user_frame, text="Leo", variable=current_user, value="Leo", command=refresh_data).pack(side=tk.LEFT, padx=5)
+for username in CONFIG["users"].keys():
+    ttk.Radiobutton(user_frame, text=username, variable=current_user, value=username, command=refresh_data).pack(side=tk.LEFT, padx=5)
 ttk.Button(user_frame, text="🔄 Refresh View", command=refresh_data).pack(side=tk.RIGHT, padx=5)
 
 notebook = ttk.Notebook(root)
@@ -572,15 +574,14 @@ api_key_entry.insert(0, CONFIG["api_key"])
 user_id_frame = ttk.LabelFrame(tab4, text="User Device IDs")
 user_id_frame.pack(fill="x", padx=10, pady=10)
 
-tk.Label(user_id_frame, text="Bob's Device ID").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-bob_id_entry = tk.Entry(user_id_frame, width=60)
-bob_id_entry.grid(row=0, column=1, padx=5, pady=5)
-bob_id_entry.insert(0, CONFIG["bob_device_id"])
+user_entries = {}  
+for i, (username, user) in enumerate(CONFIG["users"].items()):
+    tk.Label(user_id_frame, text=f"{username}'s Device ID").grid(row=i, column=0, padx=5, pady=5, sticky="w")
+    entry = tk.Entry(user_id_frame, width=60)
+    entry.insert(0, user["device_id"])
+    entry.grid(row=i, column=1, padx=5, pady=5)
+    user_entries[username] = entry
 
-tk.Label(user_id_frame, text="Leo's Device ID").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-leo_id_entry = tk.Entry(user_id_frame, width=60)
-leo_id_entry.grid(row=1, column=1, padx=5, pady=5)
-leo_id_entry.insert(0, CONFIG["leo_device_id"])
 
 ttk.Button(tab4, text="Save Settings & Test Connection", command=save_settings).pack(pady=20)
 
