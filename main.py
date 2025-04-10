@@ -212,7 +212,6 @@ def sync_discovered_folder(folder_id, folder_label):
         messagebox.showinfo("Success", f"Folder '{folder_label}' is now syncing on {active_user}'s device.")
         refresh_data()
 
-
 ### Add device to config
 def add_device():
     device_id = device_id_entry.get().strip()
@@ -315,7 +314,6 @@ def add_folder():
         refresh_data()
         folder_label_entry.delete(0, tk.END)
         folder_path_entry.delete(0, tk.END)
-
 
 def browse_folder():
     path = filedialog.askdirectory()
