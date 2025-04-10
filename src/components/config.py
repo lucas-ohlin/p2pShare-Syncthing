@@ -17,14 +17,12 @@ def load_config():
 			"api_key": "",
 			"this_device_id": "",
 			"users": {
-				"Bob": {"device_id": "", "api_url": "", "api_key": ""},
-				"Leo": {"device_id": "", "api_url": "", "api_key": ""}
-			}
+				"Bob": {"device_id": "", "api_url": "", "api_key": ""}			
+    		}
 		}
 		with open(CONFIG_FILE, 'w') as f:
 			json.dump(empty_config, f, indent=4)
 		
-		# Show a message to the user that they need to fill in the config
 		messagebox.showinfo(
 			"No existing config found. A new empty config file has been created.\n\n"
 			"Please fill in your Syncthing API details in the Settings tab."

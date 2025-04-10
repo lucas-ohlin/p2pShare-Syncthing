@@ -81,20 +81,27 @@ def refresh_data():
         label = folder['label']
         path = folder['path']
         folder_devices = {d['deviceID'] for d in folder.get('devices', [])} 
+        
+        # Check if this folder is private
+        is_private = folder.get('private', False)
+        privacy_tag = " [PRIVATE]" if is_private else ""
 
         # Ignore folders not involving this instance
         if this_id not in folder_devices:
             continue
 
         is_shared_with_active = active_user_id in folder_devices
-        display_text = f"{label} ({folder_id}) → {path}"
+        display_text = f"{label}{privacy_tag} ({folder_id}) → {path}"
 
         if is_shared_with_active:
             my_folders_list.append(display_text)
-        elif any(uid in folder_devices for uid in other_user_ids):
+        # Only show discoverable folders if they're not private or if the active user owns them
+        elif not is_private:
             if folder_id not in seen_folder_ids:
-                discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
-                seen_folder_ids.add(folder_id)
+                # Check if it's shared with any other user
+                if any(uid in folder_devices for uid in other_user_ids):
+                    discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
+                    seen_folder_ids.add(folder_id)
 
     # Update My Folders Listbox
     my_folders_listbox.insert(tk.END, *my_folders_list)
@@ -284,6 +291,18 @@ def sync_discovered_folder(folder_id, folder_label, skip_confirmation=False, ski
     if not folder_to_sync:
         messagebox.showerror("Error", f"Folder {folder_label} not found.")
         return False
+    
+    # Check if folder is private and prevent syncing wrong users
+    is_private = folder_to_sync.get('private', False)
+    folder_owner_id = next((d['deviceID'] for d in folder_to_sync.get('devices', []) if d['deviceID'] != this_id), None)
+    
+    # For private folders, check if the user trying to access it is authorized
+    # Only the original user or server admin can access private folders
+    if is_private:
+        if folder_owner_id and folder_owner_id != active_user_id:
+            messagebox.showerror("Access Denied", 
+                f"The folder '{folder_label}' is private and not accessible to {active_user}.")
+            return False
 
     # Only show confirmation if not skipped (for batch processing)
     if not skip_confirmation and not messagebox.askyesno("Confirm Sync", f"Start syncing the folder '{folder_label}' for {active_user}?"):
@@ -356,6 +375,7 @@ def add_folder():
     label = folder_label_entry.get().strip()
     path = folder_path_entry.get().strip()
     folder_type = "sendreceive"
+    is_private = private_folder_var.get() 
 
     active_user = current_user.get()
     user_info = CONFIG["users"][active_user]
@@ -408,19 +428,23 @@ def add_folder():
             {"deviceID": this_id},
             {"deviceID": active_user_id}
         ],
+        "private": is_private  
     }
 
     config['folders'].append(new_folder)
     if api.post_config(config):
         # Push the folder to the users Syncthing
-        if push_folder_to_user(new_folder, user_api_url, user_api_key):
-            messagebox.showinfo("Success", f"Folder '{label}' added and synced to {active_user}'s device.")
+        folder_for_user = new_folder.copy()
+        if push_folder_to_user(folder_for_user, user_api_url, user_api_key):
+            privacy_status = "private " if is_private else ""
+            messagebox.showinfo("Success", f"{privacy_status.capitalize()}Folder '{label}' added and synced to {active_user}'s device.")
         else:
             messagebox.showwarning("Partial Success", f"Folder added to central config, but failed to sync with {active_user}.")
         
         refresh_data()
         folder_label_entry.delete(0, tk.END)
         folder_path_entry.delete(0, tk.END)
+        private_folder_var.set(False) 
 
 def browse_folder():
     path = filedialog.askdirectory()
@@ -523,7 +547,7 @@ ttk.Button(tab2, text="➕ Add Device to Syncthing", command=add_device).pack(pa
 tk.Label(tab2, text="Note: Add the devices here first.\nThen set their IDs in the Settings tab.", wraplength=400, justify=tk.CENTER).pack(pady=10)
 
 
-# Tab 3: Add Folder
+# Tab 3: Add New Folder
 tab3 = ttk.Frame(notebook)
 notebook.add(tab3, text="Add New Folder")
 
@@ -547,11 +571,15 @@ folder_path_entry = tk.Entry(path_frame, width=40)
 folder_path_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 ttk.Button(path_frame, text="Browse...", command=browse_folder).pack(side=tk.RIGHT)
 
-# Sync type options  
-# sync_type_var = tk.StringVar(value="sendreceive")
+# Add private folder checkbox
+private_frame = ttk.Frame(tab3)
+private_frame.pack(fill="x", padx=20, pady=5)
+private_folder_var = tk.BooleanVar(value=False)
+private_checkbox = ttk.Checkbutton(private_frame, text="Make this folder private (only visible to this user and server)", variable=private_folder_var)
+private_checkbox.pack(side=tk.LEFT, padx=5)
 
 ttk.Button(tab3, text="📁 Add Folder", command=add_folder).pack(pady=20)
-tk.Label(tab3, text="This will add the folder to the server and then sync it to the user.", wraplength=400, justify=tk.CENTER).pack(pady=10)
+tk.Label(tab3, text="This will add the folder to the server and then sync it to the user.\nPrivate folders will not be visible to other users.", wraplength=400, justify=tk.CENTER).pack(pady=10)
 
 
 # Tab 4: Settings
@@ -582,8 +610,8 @@ for i, (username, user) in enumerate(CONFIG["users"].items()):
     entry.grid(row=i, column=1, padx=5, pady=5)
     user_entries[username] = entry
 
-
 ttk.Button(tab4, text="Save Settings & Test Connection", command=save_settings).pack(pady=20)
+
 
 if __name__ == "__main__":
 	save_settings()
