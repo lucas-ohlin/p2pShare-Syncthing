@@ -116,6 +116,75 @@ def sync_selected_folders():
 
     for folder_id, folder_label in selected:
         sync_discovered_folder(folder_id, folder_label)
+        
+def unsync_folder():
+    selected_index = my_folders_listbox.curselection()
+    if not selected_index:
+        messagebox.showinfo("No Selection", "Please select a folder to unsync.")
+        return
+    
+    selected_text = my_folders_listbox.get(selected_index)
+    # Extract folder ID from the display text (Format: "Label (ID) → Path")
+    import re
+    match = re.search(r'\(([^)]+)\)', selected_text)
+    if not match:
+        messagebox.showerror("Error", "Could not identify folder ID.")
+        return
+    
+    folder_id = match.group(1)
+    active_user = current_user.get()
+    active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
+    user_api_url = CONFIG["bob_api_url"] if active_user == "Bob" else CONFIG["leo_api_url"]
+    user_api_key = CONFIG["bob_api_key"] if active_user == "Bob" else CONFIG["leo_api_key"]
+    
+    if not messagebox.askyesno("Confirm Unsync", f"Are you sure you want to stop syncing the folder '{selected_text}'?\n\nThis will remove it from {active_user}'s device configuration but won't delete any files."):
+        return
+    
+    config = api.get_config()
+    if config is None:
+        return
+    
+    folder_found = False
+    for folder in config.get('folders', []):
+        if folder['id'] == folder_id:
+            folder_found = True
+            # Remove the active users device ID from devices list
+            folder['devices'] = [d for d in folder.get('devices', []) if d['deviceID'] != active_user_id]
+            break
+    
+    if not folder_found:
+        messagebox.showerror("Error", f"Folder with ID '{folder_id}' not found in configuration.")
+        return
+    
+    # Post updated config to central server
+    if not api.post_config(config):
+        messagebox.showerror("Error", "Failed to update central server configuration.")
+        return
+    
+    if user_api_url and user_api_key:
+        try:
+            # Fetch users config
+            r = requests.get(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, timeout=10)
+            r.raise_for_status()
+            user_config = r.json()
+            
+            # Remove folder from user's config
+            user_config['folders'] = [f for f in user_config.get('folders', []) if f['id'] != folder_id]
+            
+            # Update users config
+            r = requests.post(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, json=user_config, timeout=10)
+            r.raise_for_status()
+            
+            messagebox.showinfo("Success", f"Folder successfully unsynced from {active_user}'s device.")
+        except Exception as e:
+            messagebox.showwarning("Partial Success", 
+                f"Folder was removed from central server, but failed to update {active_user}'s device configuration: {str(e)}\n\n"
+                f"You may need to manually remove the folder from {active_user}'s Syncthing configuration.")
+    else:
+        messagebox.showinfo("Success", 
+            f"Folder was removed from central server configuration.\n\n"
+            f"Note: {active_user}'s API details are not configured, so you may need to manually remove the folder from their Syncthing configuration.")
+    refresh_data()
 
 def push_folder_to_user(folder, user_api_url, user_api_key):
     try:
@@ -383,6 +452,11 @@ my_folders_frame = ttk.LabelFrame(folders_pane, text="My Folders (Synced)")
 folders_pane.add(my_folders_frame, weight=1) 
 my_folders_listbox = tk.Listbox(my_folders_frame, height=8)
 my_folders_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+
+my_folders_buttons_frame = ttk.Frame(my_folders_frame)
+my_folders_buttons_frame.pack(fill="x", padx=5, pady=5)
+ttk.Button(my_folders_buttons_frame, text="🔄 Refresh", command=refresh_data).pack(side=tk.LEFT, padx=5)
+ttk.Button(my_folders_buttons_frame, text="❌ Unsync Selected Folder", command=unsync_folder).pack(side=tk.LEFT, padx=5)
 
 # Discoverable Folders frame (needs dynamic buttons)
 discoverable_folders_frame = ttk.LabelFrame(folders_pane, text="Discoverable Folders")
