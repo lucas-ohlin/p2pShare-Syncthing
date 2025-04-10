@@ -27,7 +27,6 @@ def refresh_data():
         messagebox.showerror("Error", "Failed to load data from Syncthing. Check connection and API key.")
         return
 
-    # Store this device id if it's not hardcoded in the config
     if not CONFIG["this_device_id"]:
         CONFIG["this_device_id"] = status.get('myID', '')
         if not CONFIG["this_device_id"]:
@@ -120,7 +119,7 @@ def sync_selected_folders():
 
 def push_folder_to_user(folder, user_api_url, user_api_key):
     try:
-        # Fetch user's full config
+        # Fetch users full config
         r = requests.get(f"{user_api_url}/system/config", headers={'X-API-Key': user_api_key}, timeout=10)
         r.raise_for_status()
         user_config = r.json()
