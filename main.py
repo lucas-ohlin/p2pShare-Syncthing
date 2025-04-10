@@ -13,22 +13,21 @@ CONFIG = {
     "leo_device_id": "GRVMNRX-F6IODQH-7FK34AQ-2I4X6IY-45AXU5R-QHWMMVM-44TV6HY-IZII7AJ",  
 }
 
+discoverable_folders_vars = []
+
 def handle_api_error(response, action="perform action"):
-    """Handles common API errors and shows messages."""
     try:
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-        return True # Success
+        response.raise_for_status()  
+        return True 
     except requests.exceptions.RequestException as e:
-        error_message = f"Network or connection error when trying to {action}: {e}"
+        error_message = f"Error when trying to {action}: {e}"
         try:
-            # Try to get more specific error from Syncthing response
             error_details = response.json().get('error', response.text)
-            error_message = f"Failed to {action}. Syncthing API Error: {error_details} (Status: {response.status_code})"
+            error_message = f"Failed to {action}. API Error: {error_details} (Status: {response.status_code})"
         except (json.JSONDecodeError, AttributeError):
-            # Fallback if response is not JSON or doesn't have 'error'
             error_message = f"Failed to {action}. Error: {e} (Status: {response.status_code})"
         messagebox.showerror("API Error", error_message)
-        return False # Failure
+        return False 
 
 def get_config():
     try:
@@ -74,12 +73,11 @@ def get_connections():
      return None
 
 def refresh_data():
-    """Fetches data from Syncthing and updates the GUI based on the current user view."""
     global CONFIG
 
     if not CONFIG["api_key"] or CONFIG["api_key"] == 'YOUR_SYNCTHING_API_KEY':
-         messagebox.showwarning("Configuration Needed", "Please set the Syncthing API Key in the Settings tab.")
-         return
+        messagebox.showwarning("Configuration Needed", "Please set the Syncthing API Key in the Settings tab.")
+        return
     if not CONFIG["bob_device_id"] or not CONFIG["leo_device_id"]:
         messagebox.showwarning("Configuration Needed", "Please set Bob's and Leo's Device IDs in the Settings tab.")
 
@@ -112,13 +110,11 @@ def refresh_data():
     # Clear UI Elements
     device_listbox.delete(0, tk.END)
     my_folders_listbox.delete(0, tk.END)
-    discoverable_folders_listbox.delete(0, tk.END)
     for widget in discoverable_folders_frame.winfo_children():
         if isinstance(widget, ttk.Button):
             widget.destroy()
 
     # Populate Device List
-    # device_map = {dev['deviceID']: dev['name'] for dev in devices} # Map ID to Name for display
     connection_details = connections.get('connections', {})
     device_listbox.insert(tk.END, f"👤 This Instance ({this_id}) - You are viewing as: {active_user}")
     device_listbox.itemconfig(tk.END, {'bg':'lightblue'})
@@ -158,38 +154,36 @@ def refresh_data():
 
         if is_shared_with_active:
             my_folders_list.append(display_text)
-        elif is_shared_with_other: # Only shared with the *other* user (and this instance)
+        elif is_shared_with_other: 
             discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
-
 
     # Update My Folders Listbox
     my_folders_listbox.insert(tk.END, *my_folders_list)
     if not my_folders_list:
-         my_folders_listbox.insert(tk.END, f"No folders currently shared with {active_user}.")
-         my_folders_listbox.itemconfig(tk.END, {'fg':'gray'})
-
-    # Update Discoverable Folders Listbox and add buttons
-    discoverable_title.config(text=f"Discoverable Folders from {other_user_name}")
-    if not discoverable_folders_list:
-         discoverable_folders_listbox.insert(tk.END, f"No folders found shared only by {other_user_name}.")
-         discoverable_folders_listbox.itemconfig(tk.END, {'fg':'gray'})
+        my_folders_listbox.insert(tk.END, f"No folders currently shared with {active_user}.")
+        my_folders_listbox.itemconfig(tk.END, {'fg':'gray'})
     else:
-        for i, folder_info in enumerate(discoverable_folders_list):
-            discoverable_folders_listbox.insert(tk.END, folder_info["text"])
-            # Use partial to pass folder_id and label to the sync function
-            sync_button = ttk.Button(discoverable_folders_frame, text="Sync This Folder",
-                                     command=partial(sync_discovered_folder, folder_info["id"], folder_info["label"]))
-            # Place button next to the listbox item (requires careful packing/gridding - using pack for simplicity here)
-            # This simple pack approach might not align perfectly if listbox items have variable width.
-            # A grid layout within the frame would be more robust for alignment.
-            sync_button.pack(side=tk.TOP, anchor="ne", padx=5, pady=2) # Simple packing example
+        discoverable_folders_vars.clear()
+        for folder_info in discoverable_folders_list:
+            var = tk.BooleanVar()
+            cb = ttk.Checkbutton(discoverable_folders_frame, text=folder_info["text"], variable=var)
+            cb.pack(anchor="w", padx=5, pady=2)
+            discoverable_folders_vars.append((var, folder_info["id"], folder_info["label"]))
+    ttk.Button(discoverable_folders_frame, text="✅ Sync Selected Folders", command=sync_selected_folders).pack(pady=10)
 
 
-    # Update 'Add Folder' dropdown (no longer needed as sharing is implicit)
-    # device_dropdown['values'] = [...] # Remove or repurpose if needed
 
+def sync_selected_folders():
+    selected = [(fid, label) for var, fid, label in discoverable_folders_vars if var.get()]
+    if not selected:
+        messagebox.showinfo("No Selection", "Please select at least one folder to sync.")
+        return
+
+    for folder_id, folder_label in selected:
+        sync_discovered_folder(folder_id, folder_label)
+
+### Add current users ID to the sharing list
 def sync_discovered_folder(folder_id, folder_label):
-    """Adds the current user's device ID to a discovered folder's sharing list."""
     active_user = current_user.get()
     active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
 
@@ -201,13 +195,12 @@ def sync_discovered_folder(folder_id, folder_label):
         return
 
     config = get_config()
-    if config is None: return # Error handled in get_config
+    if config is None: return 
 
     folder_updated = False
     for folder in config.get('folders', []):
         if folder['id'] == folder_id:
             devices = folder.get('devices', [])
-            # Check if device is already there (shouldn't happen based on logic, but safe check)
             if not any(d['deviceID'] == active_user_id for d in devices):
                 devices.append({'deviceID': active_user_id})
                 folder['devices'] = devices
@@ -222,9 +215,8 @@ def sync_discovered_folder(folder_id, folder_label):
         messagebox.showinfo("Success", f"Folder '{folder_label}' is now being synced with {active_user}.")
         refresh_data()  
 
-
+### Add device to config
 def add_device():
-    """Adds a device to the Syncthing configuration."""
     device_id = device_id_entry.get().strip()
     name = device_name_entry.get().strip()
 
@@ -257,12 +249,11 @@ def add_device():
         device_name_entry.delete(0, tk.END)
 
 def add_folder():
-    """Adds a new folder, sharing it with the central instance and the current user's device."""
     folder_id = folder_id_entry.get().strip() or generate_folder_id()
     label = folder_label_entry.get().strip()
     path = folder_path_entry.get().strip()
-    # folder_type = sync_type_var.get() # Type might be less relevant now, default to sendreceive? Or keep it? Let's keep it for now.
-    folder_type="sendreceive" # Simplified for this model - always sync both ways with the 'server'
+    # folder_type = sync_type_var.get() 
+    folder_type="sendreceive"
 
     active_user = current_user.get()
     active_user_id = CONFIG["bob_device_id"] if active_user == "Bob" else CONFIG["leo_device_id"]
@@ -308,13 +299,12 @@ def add_folder():
         "label": label,
         "path": path,
         "type": folder_type,
-        "rescanIntervalS": 60, # Default
-        "fsWatcherEnabled": True, # Default
+        "rescanIntervalS": 60,  
+        "fsWatcherEnabled": True,  
         "devices": [
             {"deviceID": this_id},         # Share with this central instance
             {"deviceID": active_user_id}   # Share with the current user's device
         ],
-        # Add other relevant folder fields if needed
     }
 
     config['folders'].append(new_folder)
@@ -325,11 +315,8 @@ def add_folder():
         folder_id_entry.delete(0, tk.END)
         folder_label_entry.delete(0, tk.END)
         folder_path_entry.delete(0, tk.END)
-    # Else: error message handled by post_config
-
 
 def browse_folder():
-    """Opens a directory selection dialog for the folder path."""
     path = filedialog.askdirectory()
     if path:
         folder_path_entry.delete(0, tk.END)
@@ -338,8 +325,8 @@ def browse_folder():
 def generate_folder_id():
     return uuid.uuid4().hex[:10] 
 
+### Saves API & User IDs
 def save_settings():
-    """Saves API URL/Key and User Device IDs."""
     global CONFIG
     new_url = api_url_entry.get().strip()
     new_key = api_key_entry.get().strip()
@@ -347,35 +334,25 @@ def save_settings():
     new_leo_id = leo_id_entry.get().strip()
 
     if not new_url or not new_key:
-        messagebox.showwarning("Missing Info", "API URL and Key are required.")
         return
-
-    # Basic validation of Device IDs (Syncthing IDs are complex, hard to fully validate)
-    if len(new_bob_id) < 50 or len(new_leo_id) < 50: # Very basic check
-        if not messagebox.askyesno("Confirm Device IDs", "Bob's or Leo's Device ID seems short. Are you sure they are correct?"):
-            return
 
     CONFIG["api_url"] = new_url
     CONFIG["api_key"] = new_key
     CONFIG["bob_device_id"] = new_bob_id
     CONFIG["leo_device_id"] = new_leo_id
 
-    # Test connection after saving
-    messagebox.showinfo("Settings Saved", "Settings updated. Testing connection...")
-    status = get_status() # get_status handles errors
+    status = get_status()
     if status:
-        # Force fetching this device ID again if changed URL/Key
         CONFIG["this_device_id"] = status.get('myID', '')
-        messagebox.showinfo("Connection Successful", f"Connected to Syncthing {status.get('version', 'unknown')}. This Device ID: {CONFIG['this_device_id']}")
-        refresh_data() # Refresh UI with new settings
-
+        refresh_data()
+        
 # GUI Setup
 root = tk.Tk()
 root.title("P2P Sync Manager (Bob & Leo View)")
-root.geometry("950x750") # Adjusted size slightly
+root.geometry("950x750") 
 
 # User Switcher
-current_user = tk.StringVar(value="Bob") # Default to Bob
+current_user = tk.StringVar(value="Bob")  
 user_frame = ttk.Frame(root)
 user_frame.pack(pady=5, fill="x", padx=10)
 tk.Label(user_frame, text="Current View:").pack(side=tk.LEFT, padx=5)
@@ -385,7 +362,7 @@ ttk.Button(user_frame, text="🔄 Refresh View", command=refresh_data).pack(side
 
 
 notebook = ttk.Notebook(root)
-notebook.pack(fill="both", expand=True, padx=10, pady=(0,10)) # Pad top 0
+notebook.pack(fill="both", expand=True, padx=10, pady=(0,10)) 
 
 # Tab 1: Overview
 tab1 = ttk.Frame(notebook)
@@ -403,21 +380,14 @@ folders_pane.pack(fill="both", expand=True, padx=10, pady=5)
 
 # My Folders frame
 my_folders_frame = ttk.LabelFrame(folders_pane, text="My Folders (Synced)")
-folders_pane.add(my_folders_frame, weight=1) # Allow resizing
+folders_pane.add(my_folders_frame, weight=1) 
 my_folders_listbox = tk.Listbox(my_folders_frame, height=8)
 my_folders_listbox.pack(fill="both", expand=True, padx=5, pady=5)
 
 # Discoverable Folders frame (needs dynamic buttons)
-discoverable_folders_frame = ttk.LabelFrame(folders_pane, text="Discoverable Folders") # Title set in refresh_data
-discoverable_title = discoverable_folders_frame # Reference to update label text
-folders_pane.add(discoverable_folders_frame, weight=1) # Allow resizing
-
-# Listbox for discoverable folders (buttons added dynamically in refresh_data)
-discoverable_folders_listbox = tk.Listbox(discoverable_folders_frame, height=8)
-# Pack listbox FIRST, then buttons will be packed relative to it if using simple pack
-discoverable_folders_listbox.pack(side=tk.LEFT, fill="both", expand=True, padx=5, pady=5)
-# Buttons are added in refresh_data next to this
-
+discoverable_folders_frame = ttk.LabelFrame(folders_pane, text="Discoverable Folders")
+discoverable_title = discoverable_folders_frame 
+folders_pane.add(discoverable_folders_frame, weight=1) 
 
 # Tab 2: Add Device
 tab2 = ttk.Frame(notebook)
