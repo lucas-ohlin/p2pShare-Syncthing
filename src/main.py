@@ -95,15 +95,16 @@ def refresh_data():
 
         if is_shared_with_active:
             my_folders_list.append(display_text)
-        # Only show discoverable folders if they're not private or if the active user owns them
-        elif not is_private:
+        elif (not is_private) or (is_private and folder_owned_by_active_user(folder, active_user_id, this_id)):
             if folder_id not in seen_folder_ids:
                 # Check if it's shared with any other user
                 if any(uid in folder_devices for uid in other_user_ids):
-                    discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
-                    seen_folder_ids.add(folder_id)
+                    # For private folders, make sure active user is the owner
+                    owner_id = get_folder_owner_id(folder, this_id)
+                    if not is_private or (is_private and owner_id == active_user_id):
+                        discoverable_folders_list.append({"text": display_text, "id": folder_id, "label": label})
+                        seen_folder_ids.add(folder_id)
 
-    # Update My Folders Listbox
     my_folders_listbox.insert(tk.END, *my_folders_list)
     if not my_folders_list:
         my_folders_listbox.insert(tk.END, f"No folders currently shared with {active_user}.")
@@ -116,6 +117,28 @@ def refresh_data():
             cb.pack(anchor="w", padx=5, pady=2)
             discoverable_folders_vars.append((var, folder_info["id"], folder_info["label"]))
     ttk.Button(discoverable_folders_frame, text="Sync Folders", command=sync_selected_folders).pack(pady=10)
+
+def folder_owned_by_active_user(folder, active_user_id, server_id):
+    folder_devices = {d['deviceID'] for d in folder.get('devices', [])}
+    if len(folder_devices) == 2 and server_id in folder_devices and active_user_id in folder_devices:
+        return True
+    
+    # Check if active user is the original owner (the first non-server device)
+    devices = folder.get('devices', [])
+    for device in devices:
+        if device['deviceID'] != server_id:
+            # First non-server device is the owner
+            return device['deviceID'] == active_user_id
+    
+    return False
+
+def get_folder_owner_id(folder, server_id):
+    devices = folder.get('devices', [])
+    for device in devices:
+        if device['deviceID'] != server_id:
+            # First non-server device is the owner
+            return device['deviceID']
+    return None
 
 def sync_selected_folders():
     selected = [(fid, label) for var, fid, label in discoverable_folders_vars if var.get()]
@@ -292,17 +315,17 @@ def sync_discovered_folder(folder_id, folder_label, skip_confirmation=False, ski
         messagebox.showerror("Error", f"Folder {folder_label} not found.")
         return False
     
-    # Check if folder is private and prevent syncing wrong users
+    # Check if folder is private
     is_private = folder_to_sync.get('private', False)
-    folder_owner_id = next((d['deviceID'] for d in folder_to_sync.get('devices', []) if d['deviceID'] != this_id), None)
     
-    # For private folders, check if the user trying to access it is authorized
-    # Only the original user or server admin can access private folders
-    if is_private:
-        if folder_owner_id and folder_owner_id != active_user_id:
-            messagebox.showerror("Access Denied", 
-                f"The folder '{folder_label}' is private and not accessible to {active_user}.")
-            return False
+    # Determine folder owner
+    folder_owner_id = get_folder_owner_id(folder_to_sync, this_id)
+    
+    # For private folders, strict check: only owner can access
+    if is_private and folder_owner_id != active_user_id:
+        messagebox.showerror("Access Denied", 
+            f"The folder '{folder_label}' is private and only accessible to its owner.")
+        return False
 
     # Only show confirmation if not skipped (for batch processing)
     if not skip_confirmation and not messagebox.askyesno("Confirm Sync", f"Start syncing the folder '{folder_label}' for {active_user}?"):
@@ -323,6 +346,7 @@ def sync_discovered_folder(folder_id, folder_label, skip_confirmation=False, ski
         "type": folder_to_sync.get("type", "sendreceive"),
         "rescanIntervalS": folder_to_sync.get("rescanIntervalS", 60),
         "fsWatcherEnabled": folder_to_sync.get("fsWatcherEnabled", True),
+        "private": is_private,  
         "devices": [
             {"deviceID": this_id},
             {"deviceID": active_user_id}
